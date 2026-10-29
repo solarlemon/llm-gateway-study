@@ -67,6 +67,25 @@ SSE 字节透明转发，不把网络块当作 token；增量识别结束标记�
 
 ## 配置
 
+### 把回答放到日志首行
+
+整理已有日志（原始 SSE 事件仍保留在下方）：
+
+```bash
+python3 scripts/extract_answer.py ./llm-answer.log
+```
+
+以后可在请求时直接提取，终端显示文字，完成后日志首行保存合并回答：
+
+```bash
+curl -sS -N http://127.0.0.1:8081/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"介绍一下线程池。"}],"max_tokens":128,"stream":true}' \
+  | python3 scripts/extract_answer.py --output ./llm-answer.log
+```
+
+示例首行：`回答：线程池是……`。回答内的换行在首行表示成 `\n`，原始事件保留在 `--- 原始 SSE ---` 下方。只有收到 `[DONE]` 且没有错误才标记完成；中断时仍保存已生成内容并返回非零退出码。日志在请求结束时原子写入，终端文字实时输出；原来的 `curl | tee` 命令仍只会保存原始 SSE。
+
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
 | GATEWAY_PORT | 8081 | 网关端口 |
