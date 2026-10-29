@@ -1,0 +1,22 @@
+{
+  "passed": 16,
+  "cases": [
+    "validation_nonstream_upstream_status",
+    "fifo_queue_capacity_and_503",
+    "upstream_failure_and_response_limit_release",
+    "incremental_sse_fragmented_utf8",
+    "stream_midflight_upstream_error",
+    "sse_terminal_marker_and_content_type",
+    "nonstream_disconnect_interrupts_upstream",
+    "queued_disconnect_never_forwarded",
+    "stream_disconnect_and_bounded_buffer",
+    "silent_stream_disconnect_via_heartbeat",
+    "queue_deadline_never_forwarded",
+    "total_deadline_interrupts_idle_upstream",
+    "two_execution_slots_and_zero_queue",
+    "slow_client_write_timeout_and_bounded_buffer",
+    "connect_failure_release",
+    "shutdown_running_and_queued"
+  ],
+  "note": "correctness tests, not performance benchmark"
+}
