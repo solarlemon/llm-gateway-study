@@ -25,7 +25,7 @@ class Scheduler
     std::atomic<unsigned long> accepted{0}, rejected{0}, expired{0}, finished{0};
     std::atomic<size_t> peak_buffer{0};
 
-    // 判断任务是否已失效。在调度器锁内调用；内部只短暂取 t->mu，无阻塞 I/O。
+    // prune 持调度器锁检查 waiting；worker 则在释放调度器锁后、进入 execute 前复查。
     bool stale(const std::shared_ptr<Task> &t)
     {
         {
@@ -39,7 +39,7 @@ class Scheduler
                 return true;
             }
         }
-        // 排队超时或总期限已过
+        // 排队预算与请求总预算都从接收时算起，先到者生效；返回 true 后调用方移除或跳过该任务。
         if (Clock::now() >= std::min(t->queue_deadline, t->deadline))
         {
             t->reject(504, "queue_timeout");
@@ -110,12 +110,12 @@ class Scheduler
             std::shared_ptr<Task> t;
             {
                 std::unique_lock<std::mutex> lock(mu);
-                // 等待任务
+                // ready 为空时 wait 释放 mu，让 submit/promote 能够入队；醒来后重新加锁并检查谓词。
                 wake.wait(lock, [&]
                           { return closing || !ready.empty(); });
                 if (ready.empty())
                     return; // closing 且无任务 → 退出
-                // ready 队首出队，放入 running
+                // ready → running 只是转移已预留的槽位，active 保持不变。退出临界区后才执行耗时任务。
                 t = ready.front();
                 ready.pop_front();
                 running[t->id] = t;
@@ -168,6 +168,7 @@ public:
                   if (closing && active == 0) return;   // 关闭且全部收尾 → 退出
                   prune();
                   for (const auto &entry : running) snapshot.push_back(entry.second); }
+                // 快照持有 Task 引用，取消操作在调度器锁外进行。HTTP 中断上游连接，native 在生成块或步骤之间检查取消。
                 for (const auto &t : snapshot) {
                     bool cancelled;
                     { std::lock_guard<std::mutex> lock(t->mu); cancelled = t->cancelled; }
@@ -178,6 +179,7 @@ public:
             } });
     }
 
+    // 准入判断与占位共用一把锁，避免多个提交者同时抢到最后一个槽位。waiting.empty() 防止新请求插队。例见 tests/integration.py。
     bool submit(const std::shared_ptr<Task> &t)
     {
         std::lock_guard<std::mutex> lock(mu);
@@ -199,7 +201,7 @@ public:
         }
         else
         {
-            // 队列满：拒绝，返回 503
+            // 执行槽和等待名额均已用尽。reject 将 503 写入 Task 并唤醒 HTTP 线程，由 HTTP 层发送响应。
             t->reject(503, "queue_full");
             ++rejected;
             return false;
