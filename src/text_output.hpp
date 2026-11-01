@@ -73,6 +73,7 @@ public:
         pending += piece;
 
         // 1) 检查 pending 中是否已完整出现停止串（可能跨多个 piece）
+        // 对应测试：stop 为 END 时，收到 abcE 先发 abc 并保留 E；再收到 NDhidden 时命中 END，后续 hidden 也丢弃。
         size_t match = std::string::npos;
         for (const auto &s : stops)
             match = std::min(match, pending.find(s));
