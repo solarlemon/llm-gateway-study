@@ -1,5 +1,4 @@
 #pragma once
-#include "httplib.h"
 #include "json.hpp"
 #include "metrics.hpp"
 #include <atomic>
@@ -33,19 +32,14 @@ struct Task
     bool cancelled = false;
 
     // 响应数据
-    int status = 502;
+    int status = 500;
     std::string type = "application/json", failure, response;
-    std::string sse_line;
-    bool sse_done = false;
-    bool sse_error_event = false;
-    std::string sse_data;
     size_t sse_bytes = 0, first_content_end = 0, forwarded_bytes = 0;
 
     // 追踪与缓冲数据
     std::shared_ptr<RequestTrace> trace;
     std::deque<std::string> chunks;
     size_t buffered = 0, peak_buffered = 0;
-    std::shared_ptr<httplib::Client> client;
 
     Task(std::string request_id, std::string request_body, bool streaming, int queue_ms, int total_ms,
          std::shared_ptr<RequestTrace> observation)
@@ -57,28 +51,16 @@ struct Task
         deadline = received + std::chrono::milliseconds(total_ms);
     }
 
-    // 取消先在锁内保存原因及 Client 引用，再到锁外 stop；避免持任务锁执行 socket 中断。
-    // 复制 shared_ptr 保证解锁后 Client 仍存活。取消 native 任务依赖生成阶段的协作检查。
-    void cancel(const std::string &reason)
-    {
-        std::shared_ptr<httplib::Client> current;
+    // 发布协作式取消并唤醒缓冲生产者/消费者，模型在 token 或层之间检查状态。
+    void cancel(const std::string& reason) {
         {
             std::lock_guard<std::mutex> lock(mu);
-            if (!cancelled)
-            {
-                cancelled = true;
-                failure = reason;
-            }
+            if (!cancelled) { cancelled=true; failure=reason; }
             trace->fail(failure);
-            current = client;
         }
         cv.notify_all();
-        // cpp-httplib Client::stop interrupts an in-flight socket operation.
-        // Repeated watchdog calls cover a cancel/send-start race.
-        if (current)
-            current->stop();
     }
-    
+
     void reject(int code, const std::string &reason)
     {
         std::lock_guard<std::mutex> lock(mu);
