@@ -80,13 +80,12 @@ class Scheduler
             // 分三段，锁顺序严格：t->mu → 释放 → mu
             std::lock_guard<std::mutex> lock(t->mu);
             peak = t->peak_buffered;
-            t->client.reset(); // 释放 Client，避免析构阻塞
             t->worker_released = true;
             t->cv.notify_all();
             t->trace->fail(t->failure);
             t->trace->worker_finished();
             // 构造 JSON 日志：请求 ID、上游状态、失败原因、排队时长（started - received）、worker 生命周期（now - started）、峰值缓冲
-            log = Json{{"request_id", t->id}, {"upstream_status", t->status}, {"failure", t->failure}, {"queue_ms", std::chrono::duration_cast<std::chrono::milliseconds>(t->started - t->received).count()}, {"worker_lifetime_ms", std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t->started).count()}, {"peak_stream_buffer_bytes", peak}}.dump();
+            log = Json{{"request_id", t->id}, {"http_status", t->status}, {"failure", t->failure}, {"queue_ms", std::chrono::duration_cast<std::chrono::milliseconds>(t->started - t->received).count()}, {"worker_lifetime_ms", std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t->started).count()}, {"peak_stream_buffer_bytes", peak}}.dump();
         }
         // 锁外 CAS 更新全局峰值缓冲
         size_t observed = peak_buffer.load();
@@ -168,11 +167,11 @@ public:
                   if (closing && active == 0) return;   // 关闭且全部收尾 → 退出
                   prune();
                   for (const auto &entry : running) snapshot.push_back(entry.second); }
-                // 快照持有 Task 引用，取消操作在调度器锁外进行。HTTP 中断上游连接，native 在生成块或步骤之间检查取消。
+                // 快照持有 Task 引用，取消操作在调度器锁外进行。模型在 token 或层之间检查取消。
                 for (const auto &t : snapshot) {
                     bool cancelled;
                     { std::lock_guard<std::mutex> lock(t->mu); cancelled = t->cancelled; }
-                    // 重复 cancel 覆盖 cancel/send-start 竞态
+                    // 重复检查取消标志，确保等待者持续得到通知。
                     if (Clock::now() >= t->deadline) t->cancel("request_timeout");
                     else if (cancelled) t->cancel("cancelled");
                 }
