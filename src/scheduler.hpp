@@ -135,6 +135,7 @@ class Scheduler
             try
             {
                 if (!stale(t))
+                    // 执行模型推理，实际执行 forward_mini(config, engine, t);
                     execute(t); // 出队到执行间可能被取消/超时，再判一次
             }
             catch (const std::exception &e)
